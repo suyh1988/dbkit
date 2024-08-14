@@ -29,7 +29,7 @@ func logInit() *logging.Logger {
 		ConsoleLoggingEnabled: false,
 		FileLoggingEnabled:    true,
 		EncodeLogsAsJson:      true,
-		Directory:             "/Users/suyonghe/Desktop/dbkit/logs/",
+		Directory:             "/data/logs/",
 		Filename:              "dba.log",
 		MaxSize:               100,
 		MaxBackups:            10,

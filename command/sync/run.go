@@ -3,6 +3,8 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"dbkit/command/binlogsql"
+	"dbkit/conf"
 	"dbkit/model"
 	"fmt"
 	"github.com/go-mysql-org/go-mysql/mysql"
@@ -10,34 +12,64 @@ import (
 	"github.com/go-redis/redis/v8"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/rs/zerolog/log"
+	"strconv"
+	"strings"
 )
 
 var ctx = context.Background()
 
 func Run(options *model.DaemonOptions, _args []string) error {
 	var (
-		serverID  = options.MysqlSync.ServerID
-		mysqlIP   = options.MysqlSync.SourceIP
-		mysqlPort = options.MysqlSync.SourcePort
-		mysqlUser = options.MysqlSync.SourceUser
-		mysqlPwd  = options.MysqlSync.SourcePassWord
-		//syncMode   = options.MysqlSync.SyncMode   //increase :from the new pose ; full: dump data first, and read change from binlog pose
-		//targetType = options.MysqlSync.TargetType //sync data to redis ,redis default struct is hash
-		dbName  = options.MysqlSync.DBName
-		tbName  = options.MysqlSync.TableName // Added table name
-		charset = options.MysqlSync.CharSet
+		serverID   = options.MysqlSync.ServerID
+		mysqlIP    = options.MysqlSync.SourceIP
+		mysqlPort  = options.MysqlSync.SourcePort
+		mysqlUser  = options.MysqlSync.SourceUser
+		mysqlPwd   = options.MysqlSync.SourcePassWord
+		syncMode   = options.MysqlSync.SyncMode   //increase :from the new pose ; full: dump data first, and read change from binlog pose
+		targetType = options.MysqlSync.TargetType //sync data to redis ,redis default struct is hash
+		dbName     = options.MysqlSync.DBName
+		tbName     = options.MysqlSync.TableName // Added table name
+		charset    = options.MysqlSync.CharSet
+		binlogPos  = options.MysqlSync.BinlogPos
 
 		targetIP   = options.MysqlSync.TargetIP
 		targetPort = options.MysqlSync.TargetPort
-		//targetUser = options.MysqlSync.TargetUser
-		targetPwd = options.MysqlSync.TargetPassword
+		targetUser = options.MysqlSync.TargetUser
+		targetPwd  = options.MysqlSync.TargetPassword
+		targetDB   = options.MysqlSync.RedisDB
 	)
+	if options.MysqlSync.ConfigFile != "" {
+		SyncConfig, err := conf.ReadConf(options.MysqlSync.ConfigFile)
+		if err != nil {
+			fmt.Printf("load configuration file faild, please recheck:%s", options.MysqlSync.ConfigFile)
+		}
+		serverID = SyncConfig.MySQLSync.ServerID
+		mysqlIP = SyncConfig.MySQLSync.MySQLIP
+		mysqlPort = SyncConfig.MySQLSync.MysqlPort
+		mysqlUser = SyncConfig.MySQLSync.MysqlUser
+		mysqlPwd = SyncConfig.MySQLSync.MysqlPassword
+		syncMode = SyncConfig.MySQLSync.SyncMode     //increase :from the new pose ; full: dump data first, and read change from binlog pose
+		targetType = SyncConfig.MySQLSync.TargetType //sync data to redis ,redis default struct is hash
+		dbName = SyncConfig.MySQLSync.DbName
+		tbName = SyncConfig.MySQLSync.TableName // Added table name
+		charset = SyncConfig.MySQLSync.Charset
+		binlogPos = SyncConfig.MySQLSync.BinlogPos
+
+		targetIP = SyncConfig.Redis.IP
+		targetPort = SyncConfig.Redis.Port
+		targetUser = SyncConfig.Redis.User
+		targetPwd = SyncConfig.Redis.Password
+		targetDB = SyncConfig.Redis.DB
+
+	}
 
 	var db *sql.DB
 	var err error
+	var position *mysql.Position
 
 	if mysqlIP != "" && mysqlPort != 0 && mysqlUser != "" && mysqlPwd != "" {
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", mysqlUser, mysqlPwd, mysqlIP, mysqlPort, dbName)
+		log.Info().Msg(dsn)
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Error().Err(err)
@@ -46,135 +78,127 @@ func Run(options *model.DaemonOptions, _args []string) error {
 		defer db.Close()
 	}
 
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     targetIP + ":" + targetPort,
-		Password: targetPwd,
-		DB:       0,
-	})
+	if targetType == "redis" {
+		redisClient := redis.NewClient(&redis.Options{
+			Addr:     targetIP + ":" + targetPort,
+			Username: targetUser,
+			Password: targetPwd,
+			DB:       targetDB,
+		})
+		defer redisClient.Close()
 
-	cfg := replication.BinlogSyncerConfig{
-		ServerID: uint32(serverID),
-		Flavor:   "mysql",
-		Host:     mysqlIP,
-		Port:     uint16(mysqlPort),
-		User:     mysqlUser,
-		Password: mysqlPwd,
-		Charset:  charset,
-	}
+		cfg := replication.BinlogSyncerConfig{
+			ServerID: uint32(serverID),
+			Flavor:   "mysql",
+			Host:     mysqlIP,
+			Port:     uint16(mysqlPort),
+			User:     mysqlUser,
+			Password: mysqlPwd,
+			Charset:  charset,
+		}
 
-	syncer := replication.NewBinlogSyncer(cfg)
-	defer syncer.Close()
+		syncer := replication.NewBinlogSyncer(cfg)
+		defer syncer.Close()
 
-	position := mysql.Position{}
+		if syncMode == "increase" {
+			//增量同步如果提供的位点不合法就全量同步
+			err, position = CheckBinlogPosOK(binlogPos, db)
+			if err != nil {
+				syncMode = "full"
+			}
+		}
+		if syncMode == "full" {
+			log.Info().Msg(fmt.Sprintf("dump mysql full data %s.%s to redis startting", dbName, tbName))
+			position, err = DumpMySQLTableToRedis(db, dbName, tbName, redisClient)
+			if err != nil {
+				log.Error().Err(err).Msg("dump mysql data to redis failed")
+				return err
+			}
+			log.Info().Msg(fmt.Sprintf("dump mysql full data %s.%s to redis success", dbName, tbName))
+		}
 
-	streamer, err := syncer.StartSync(position)
-	if err != nil {
-		log.Error().Err(err)
-		return err
-	}
-
-	ctx := context.Background()
-	for {
-		ev, err := streamer.GetEvent(ctx)
+		log.Info().Msg(fmt.Sprintf("sync begin at %s:%d to redis", position.Name, position.Pos))
+		streamer, err := syncer.StartSync(*position)
 		if err != nil {
 			log.Error().Err(err)
 			return err
 		}
 
-		switch e := ev.Event.(type) {
-		case *replication.QueryEvent:
-			fmt.Printf("[%s] %s\n", ev.Header.EventType, e.Query)
-		case *replication.RowsEvent:
-			eventDB := string(e.Table.Schema)
-			eventTable := string(e.Table.Table)
-
-			if dbName != "" && eventDB != dbName {
-				continue
+		var lastBinlogFilename, currentBinlogFilename string
+		lastBinlogFilename = position.Name
+		currentBinlogFilename = position.Name
+		for {
+			ev, err := streamer.GetEvent(ctx)
+			if err != nil {
+				log.Error().Err(err)
+				return err
 			}
 
-			if tbName != "" && eventTable != tbName {
-				continue
+			// 获取当前事件的位点信息
+			currentPos := ev.Header.LogPos
+			err = conf.UpdateBinlogPos(options.MysqlSync.ConfigFile, currentBinlogFilename+":"+strconv.Itoa(int(currentPos)))
+			if err != nil {
+				log.Info().Err(err).Msg(fmt.Sprintf("update binlog pos to %s failed", options.MysqlSync.ConfigFile))
 			}
 
-			switch ev.Header.EventType {
-			case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
-				for _, row := range e.Rows {
-					handleInsertEvent(redisClient, eventTable, row, db)
+			switch e := ev.Event.(type) {
+			case *replication.QueryEvent:
+				// 检查是否是事务开始的 QueryEvent
+				if strings.ToUpper(strings.TrimSpace(string(e.Query))) == "BEGIN" {
+					// 忽略事务开始的 QueryEvent
+					continue
 				}
-			case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
-				for i := 0; i < len(e.Rows); i += 2 {
-					handleUpdateEvent(redisClient, eventTable, e.Rows[i], e.Rows[i+1], db)
+				// 如果是DDL语句，检查是否作用于指定的db和table
+				if binlogsql.IsDDL(string(e.Query)) {
+					ddlDB, ddlTable := binlogsql.ParseDDL(string(e.Query))
+					if (dbName != "" && ddlDB != dbName) || (tbName != "" && ddlTable != tbName) {
+						continue
+					}
 				}
-			case replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
-				for _, row := range e.Rows {
-					handleDeleteEvent(redisClient, eventTable, row, db)
+				//fmt.Printf("[%s] %s\n", ev.Header.EventType, e.Query)
+			case *replication.RowsEvent:
+				eventDB := string(e.Table.Schema)
+				eventTable := string(e.Table.Table)
+
+				if dbName != "" && eventDB != dbName {
+					continue
 				}
+
+				if tbName != "" && eventTable != tbName {
+					continue
+				}
+
+				switch ev.Header.EventType {
+				case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
+					for _, row := range e.Rows {
+						handleInsertEvent(ctx, redisClient, eventDB, eventTable, row, db, e)
+					}
+				case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
+					for i := 0; i < len(e.Rows); i += 2 {
+						handleUpdateEvent(redisClient, eventDB, eventTable, e.Rows[i+1], db, e)
+					}
+				case replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
+					for _, row := range e.Rows {
+						handleDeleteEvent(redisClient, eventDB, eventTable, row, db)
+					}
+				}
+			case *replication.RotateEvent:
+				currentBinlogFilename = string(e.NextLogName)
+				fmt.Printf("Rotate to %s, pos %d\n", e.NextLogName, e.Position)
 			}
-		case *replication.RotateEvent:
-			fmt.Printf("Rotate to %s, pos %d\n", e.NextLogName, e.Position)
+
+			// 如果未遇到 RotateEvent，可以使用上一次的 filename
+			if currentBinlogFilename == "" {
+				currentBinlogFilename = lastBinlogFilename
+			}
+
+			fmt.Printf("Current binlog filename: %s, position: %d\n", currentBinlogFilename, currentPos)
+
+			// 更新上一次的文件名
+			lastBinlogFilename = currentBinlogFilename
 		}
+
 	}
 
 	return nil
-}
-
-func handleInsertEvent(client *redis.Client, table string, row []interface{}, db *sql.DB) {
-	key := generateRedisKey(table, row, db)
-	data := generateRedisData(row, db)
-	_, err := client.HSet(ctx, key, data).Result()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to insert data into Redis")
-	}
-}
-
-func handleUpdateEvent(client *redis.Client, table string, oldRow []interface{}, newRow []interface{}, db *sql.DB) {
-	key := generateRedisKey(table, newRow, db)
-	data := generateRedisData(newRow, db)
-	_, err := client.HSet(ctx, key, data).Result()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to update data in Redis")
-	}
-}
-
-func handleDeleteEvent(client *redis.Client, table string, row []interface{}, db *sql.DB) {
-	key := generateRedisKey(table, row, db)
-	_, err := client.Del(ctx, key).Result()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to delete data from Redis")
-	}
-}
-
-func generateRedisKey(table string, row []interface{}, db *sql.DB) string {
-	// Assuming the primary key is the first column in the row
-	primaryKey := fmt.Sprintf("%v", row[0])
-	return fmt.Sprintf("%s:%s", table, primaryKey)
-}
-
-func generateRedisData(row []interface{}, db *sql.DB) map[string]interface{} {
-	// Generate the data map from the row
-	data := make(map[string]interface{})
-	columns, _ := getColumnNames(db, "your_schema_name", "your_table_name") // Replace with actual schema and table name
-	for i, column := range columns {
-		data[column] = row[i]
-	}
-	return data
-}
-
-func getColumnNames(db *sql.DB, schema, table string) ([]string, error) {
-	query := "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION;"
-	rows, err := db.Query(query, schema, table)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var columnNames []string
-	for rows.Next() {
-		var columnName string
-		if err := rows.Scan(&columnName); err != nil {
-			return nil, err
-		}
-		columnNames = append(columnNames, columnName)
-	}
-	return columnNames, nil
 }

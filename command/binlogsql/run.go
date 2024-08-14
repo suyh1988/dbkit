@@ -25,7 +25,7 @@ func Run(options *model.DaemonOptions, _args []string) error {
 		charset   = options.BinlogSql.CharSet
 		mode      = options.BinlogSql.Mode
 		dbName    = options.BinlogSql.DBName
-		tbName    = options.BinlogSql.TableName // Added table name
+		tbName    = options.BinlogSql.TableName
 		startFile = options.BinlogSql.StartFile
 		stopFile  = options.BinlogSql.StopFile
 		startPose = options.BinlogSql.StartPose
@@ -84,6 +84,7 @@ func Run(options *model.DaemonOptions, _args []string) error {
 			continue
 		}
 
+		transactionID := ev.Header.LogPos
 		switch e := ev.Event.(type) {
 		case *replication.QueryEvent:
 			// 检查是否是事务开始的 QueryEvent
@@ -92,8 +93,8 @@ func Run(options *model.DaemonOptions, _args []string) error {
 				continue
 			}
 			// 如果是DDL语句，检查是否作用于指定的db和table
-			if isDDL(string(e.Query)) {
-				ddlDB, ddlTable := parseDDL(string(e.Query))
+			if IsDDL(string(e.Query)) {
+				ddlDB, ddlTable := ParseDDL(string(e.Query))
 				if (dbName != "" && ddlDB != dbName) || (tbName != "" && ddlTable != tbName) {
 					continue
 				}
@@ -111,7 +112,7 @@ func Run(options *model.DaemonOptions, _args []string) error {
 				continue
 			}
 
-			sql, err := generateSQL(db, ev.Header.EventType, e, mode)
+			sql, err := generateSQL(db, ev.Header.EventType, e, mode, transactionID, eventTime)
 			if err != nil {
 				log.Printf("Error generating SQL: %v\n", err)
 				continue
@@ -126,12 +127,12 @@ func Run(options *model.DaemonOptions, _args []string) error {
 	}
 }
 
-func isDDL(query string) bool {
+func IsDDL(query string) bool {
 	ddlRegex := regexp.MustCompile(`(?i)^\s*(CREATE|ALTER|DROP|RENAME|TRUNCATE)\s+`)
 	return ddlRegex.MatchString(query)
 }
 
-func parseDDL(query string) (string, string) {
+func ParseDDL(query string) (string, string) {
 	// 假设DDL语句的格式为: CREATE TABLE db.table (...), ALTER TABLE db.table ..., DROP TABLE db.table ...
 	ddlRegex := regexp.MustCompile(`(?i)^\s*(CREATE|ALTER|DROP|RENAME|TRUNCATE)\s+(TABLE\s+)?(?P<db>\w+)\.(?P<table>\w+)`)
 	match := ddlRegex.FindStringSubmatch(query)
@@ -159,7 +160,7 @@ func parseTime(timeStr string) time.Time {
 	return t
 }
 
-func generateSQL(db *sql.DB, eventType replication.EventType, e *replication.RowsEvent, mode string) (string, error) {
+func generateSQL(db *sql.DB, eventType replication.EventType, e *replication.RowsEvent, mode string, transactionID uint32, eventTime time.Time) (string, error) {
 	schema := string(e.Table.Schema)
 	table := string(e.Table.Table)
 	tableName := fmt.Sprintf("%s.%s", schema, table)
@@ -168,25 +169,36 @@ func generateSQL(db *sql.DB, eventType replication.EventType, e *replication.Row
 		return "", err
 	}
 
+	var sqls []string
 	switch eventType {
 	case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
 		if mode == "flashback" {
-			return generateDeleteSQL(tableName, columnNames, e.Rows), nil
+			sqls = generateDeleteSQL(tableName, columnNames, e.Rows)
+		} else {
+			sqls = generateInsertSQL(tableName, columnNames, e.Rows)
 		}
-		return generateInsertSQL(tableName, columnNames, e.Rows), nil
 	case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 		if mode == "flashback" {
-			return generateReverseUpdateSQL(tableName, columnNames, e.Rows), nil
+			sqls = generateReverseUpdateSQL(tableName, columnNames, e.Rows)
+		} else {
+			sqls = generateUpdateSQL(tableName, columnNames, e.Rows)
 		}
-		return generateUpdateSQL(tableName, columnNames, e.Rows), nil
 	case replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 		if mode == "flashback" {
-			return generateInsertSQL(tableName, columnNames, e.Rows), nil
+			sqls = generateInsertSQL(tableName, columnNames, e.Rows)
+		} else {
+			sqls = generateDeleteSQL(tableName, columnNames, e.Rows)
 		}
-		return generateDeleteSQL(tableName, columnNames, e.Rows), nil
 	default:
 		return "", fmt.Errorf("unsupported event type: %v", eventType)
 	}
+
+	// 将事务 ID 和执行时间添加到每条 SQL 语句中
+	for i, sql := range sqls {
+		sqls[i] = fmt.Sprintf("-- Transaction ID: %d, Executed At: %s\n%s", transactionID, eventTime.Format("2006-01-02 15:04:05"), sql)
+	}
+
+	return strings.Join(sqls, "\n"), nil
 }
 
 func getColumnNames(db *sql.DB, schema, table string) ([]string, error) {
@@ -211,7 +223,7 @@ func getColumnNames(db *sql.DB, schema, table string) ([]string, error) {
 	return columnNames, nil
 }
 
-func generateInsertSQL(tableName string, columnNames []string, rows [][]interface{}) string {
+func generateInsertSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
 	var sqls []string
 	columns := strings.Join(columnNames, ", ")
 	for _, row := range rows {
@@ -222,10 +234,10 @@ func generateInsertSQL(tableName string, columnNames []string, rows [][]interfac
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);", tableName, columns, strings.Join(values, ", "))
 		sqls = append(sqls, sql)
 	}
-	return strings.Join(sqls, "\n")
+	return sqls
 }
 
-func generateUpdateSQL(tableName string, columnNames []string, rows [][]interface{}) string {
+func generateUpdateSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
 	var sqls []string
 	for i := 0; i < len(rows); i += 2 {
 		before := rows[i]
@@ -241,10 +253,10 @@ func generateUpdateSQL(tableName string, columnNames []string, rows [][]interfac
 		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s;", tableName, strings.Join(setClauses, ", "), strings.Join(whereClauses, " AND "))
 		sqls = append(sqls, sql)
 	}
-	return strings.Join(sqls, "\n")
+	return sqls
 }
 
-func generateReverseUpdateSQL(tableName string, columnNames []string, rows [][]interface{}) string {
+func generateReverseUpdateSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
 	var sqls []string
 	for i := 0; i < len(rows); i += 2 {
 		before := rows[i]
@@ -260,10 +272,10 @@ func generateReverseUpdateSQL(tableName string, columnNames []string, rows [][]i
 		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s;", tableName, strings.Join(setClauses, ", "), strings.Join(whereClauses, " AND "))
 		sqls = append(sqls, sql)
 	}
-	return strings.Join(sqls, "\n")
+	return sqls
 }
 
-func generateDeleteSQL(tableName string, columnNames []string, rows [][]interface{}) string {
+func generateDeleteSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
 	var sqls []string
 	for _, row := range rows {
 		whereClauses := make([]string, len(row))
@@ -273,5 +285,5 @@ func generateDeleteSQL(tableName string, columnNames []string, rows [][]interfac
 		sql := fmt.Sprintf("DELETE FROM %s WHERE %s;", tableName, strings.Join(whereClauses, " AND "))
 		sqls = append(sqls, sql)
 	}
-	return strings.Join(sqls, "\n")
+	return sqls
 }

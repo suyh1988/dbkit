@@ -11,11 +11,13 @@ type SyncOption struct {
 	TargetPort     string
 	TargetUser     string
 	TargetPassword string
+	ConfigFile     string
+	BinlogPos      string
 
 	DBName    string // mysql database name
 	TableName string // mysql table name
 	ServerID  int    //server id
 	Mode      string // operation type
 	CharSet   string
-	RedisDB   string
+	RedisDB   int
 }

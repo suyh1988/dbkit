@@ -97,6 +97,12 @@ func BinlogActionFlag(options *model.DaemonOptions) []cli.Flag {
 			Usage:       "mysql server id",
 			Destination: &options.MysqlSync.ServerID,
 		},
+		cli.StringFlag{
+			Name:        "conf",
+			Value:       "",
+			Usage:       "sync configuration file",
+			Destination: &options.MysqlSync.ConfigFile,
+		},
 	}
 }
 
