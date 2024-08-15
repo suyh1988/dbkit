@@ -16,4 +16,5 @@ type MysqlBinlogSql struct {
 	StopPose  int
 	StartTime string
 	StopTime  string
+	List      int
 }

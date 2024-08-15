@@ -164,7 +164,7 @@ func generateRedisKey2(table string, row []interface{}, columns []string, primar
 }
 
 func CheckBinlogPosOK(pos string, db *sql.DB) (error, *mysql.Position) {
-	var position *mysql.Position
+	var position mysql.Position
 	parts := strings.Split(pos, ":")
 	if len(parts) != 2 {
 		log.Error().Msg("Invalid binlog position format")
@@ -192,7 +192,7 @@ func CheckBinlogPosOK(pos string, db *sql.DB) (error, *mysql.Position) {
 		binlogSizes = append(binlogSizes, size)
 
 		if file == position.Name && uint32(size) >= position.Pos {
-			return nil, position
+			return nil, &position
 		}
 	}
 	return errors.New(fmt.Sprintf("Invalid binlog position: %s", pos)), nil

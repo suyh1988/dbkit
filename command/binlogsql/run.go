@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"dbkit/model"
+	"errors"
 	"fmt"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
@@ -41,10 +42,13 @@ func Run(options *model.DaemonOptions, _args []string) error {
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", user, password, host, port, dbName)
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
-			log.Error().Err(err)
+			log.Error().Err(err).Msg(fmt.Sprintf("connection to mysql '%s' failed ", dsn))
 			return err
 		}
 		defer db.Close()
+	} else {
+		fmt.Printf("action %s must give ip,port,user,password, and the user must have replication slave,replication client ,super privileges\n", options.ActionType)
+		return errors.New("options given error")
 	}
 
 	cfg := replication.BinlogSyncerConfig{
@@ -55,6 +59,12 @@ func Run(options *model.DaemonOptions, _args []string) error {
 		User:     user,
 		Password: password,
 		Charset:  charset,
+	}
+
+	//执行list选项，列出binlog file的详细信息
+	if options.BinlogSql.List == 1 {
+		err := GetBinlogInfo(db)
+		return err
 	}
 
 	syncer := replication.NewBinlogSyncer(cfg)

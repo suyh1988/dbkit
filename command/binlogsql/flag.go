@@ -18,7 +18,7 @@ func BinlogActionFlag(options *model.DaemonOptions) []cli.Flag {
 		},
 		cli.IntFlag{
 			Name:        "port",
-			Value:       3306,
+			Value:       0,
 			Usage:       "hdfs cluster e.g sz/wx.",
 			Destination: &options.BinlogSql.Port,
 		},
@@ -100,6 +100,12 @@ func BinlogActionFlag(options *model.DaemonOptions) []cli.Flag {
 			Value:       "",
 			Usage:       "binlog start start time",
 			Destination: &options.BinlogSql.StopTime,
+		},
+		cli.IntFlag{
+			Name:        "list",
+			Value:       0,
+			Usage:       "binlog start start time",
+			Destination: &options.BinlogSql.List,
 		},
 	}
 }
