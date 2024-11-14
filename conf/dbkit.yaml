@@ -1,0 +1,16 @@
+mysql_sync:
+  server_id: 8888
+  source_ip: "127.0.0.1"
+  source_port: 3306
+  source_user: "db_monitor"
+  source_password: ""
+  sync_mode: "increase" # or "full"
+  target_type: "redis" # specify the target type, e.g., redis
+  db_name: "your_database_name"
+  table_name: "your_table_name"
+  charset: "utf8mb4"
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: "your_redis_password"
+  db: 0
