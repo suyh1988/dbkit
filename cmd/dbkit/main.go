@@ -46,8 +46,11 @@ func main() {
 
 	//log.Info().Msg("dba started!!!!")
 	app := cli.NewApp()
-	app.Name = "Operate Tools"
-	app.Usage = ``
+	app.Name = "mysql binlog tool"
+	app.Usage = `1. 支持mysql binlog文件解析出sql以及回滚sql,需要在mysql服务器上执行,并且需要连上mysql;
+				2. 支持分析binlog文件,还有哪些表有写入,通常用于下线检查;
+				3. 支持mysql数据变更同步到异构数据库,如redis/mongodb/es等
+`
 	app.Version = "1.0.0"
 
 	app.Flags = config.NewGlobalFlags(options)
@@ -59,7 +62,7 @@ func main() {
 	err := app.Run(os.Args)
 	if err != nil {
 		log.Error().Msg(err.Error())
-		println("有错误:" + err.Error())
+		println("err:" + err.Error())
 		os.Exit(-1)
 	}
 }

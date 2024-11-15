@@ -16,6 +16,17 @@ import (
 	"time"
 )
 
+type Column struct {
+	Name string // 列名
+	Type string // 数据类型
+}
+
+type TableSchema struct {
+	DbName    string
+	TableName string
+	Columns   []Column
+}
+
 func Run(options *model.DaemonOptions, _args []string) error {
 	var (
 		serverID  = options.BinlogSql.ServerID
@@ -125,28 +136,31 @@ func Run(options *model.DaemonOptions, _args []string) error {
 			log.Error().Err(err)
 			return err
 		}
-
+		var schema TableSchema
 		for {
-			err := ParseBinlogSQL(db, streamer, ctx, options)
-			log.Error().Err(err).Msg(fmt.Sprintf("parse binlog to sql err."))
+			ev, err := streamer.GetEvent(ctx)
+
+			if err != nil {
+				// 检查是否是超时导致的退出
+				if errors.Is(err, context.DeadlineExceeded) {
+					log.Info().Msg(fmt.Sprintf("Context deadline exceeded: exiting binlog stream."))
+					return nil
+				}
+				// 处理其他错误
+				log.Info().Msg(fmt.Sprintf("Error in binlog streaming: %v\n", err))
+				return err
+			}
+
+			err = ParseBinlogSQL(db, ev, options, syncer.GetNextPosition().Name, &schema)
+			if err != nil {
+				log.Error().Err(err).Msg(fmt.Sprintf("parse binlog to sql err."))
+			}
 		}
 	}
 
 }
 
-func ParseBinlogSQL(db *sql.DB, streamer *replication.BinlogStreamer, ctx context.Context, options *model.DaemonOptions) error {
-	ev, err := streamer.GetEvent(ctx)
-	if err != nil {
-		// 检查是否是超时导致的退出
-		if errors.Is(err, context.DeadlineExceeded) {
-			log.Info().Msg(fmt.Sprintf("Context deadline exceeded: exiting binlog stream."))
-			return nil
-		}
-		// 处理其他错误
-		log.Info().Msg(fmt.Sprintf("Error in binlog streaming: %v\n", err))
-		return err
-	}
-
+func ParseBinlogSQL(db *sql.DB, ev *replication.BinlogEvent, options *model.DaemonOptions, fileName string, schema *TableSchema) error {
 	eventTime := time.Unix(int64(ev.Header.Timestamp), 0)
 	if (options.BinlogSql.StartTime != "" && eventTime.Before(parseTime(options.BinlogSql.StartTime))) || (options.BinlogSql.StopTime != "" && eventTime.After(parseTime(options.BinlogSql.StopTime))) {
 		//continue
@@ -154,6 +168,7 @@ func ParseBinlogSQL(db *sql.DB, streamer *replication.BinlogStreamer, ctx contex
 	}
 
 	transactionID := ev.Header.LogPos
+
 	switch e := ev.Event.(type) {
 	case *replication.QueryEvent:
 		// 检查是否是事务开始的 QueryEvent
@@ -162,10 +177,11 @@ func ParseBinlogSQL(db *sql.DB, streamer *replication.BinlogStreamer, ctx contex
 			//continue
 			return nil
 		}
+
 		// 如果是DDL语句，检查是否作用于指定的db和table
 		if IsDDL(string(e.Query)) {
-			ddlDB, ddlTable := ParseDDL(string(e.Query))
-			if (options.BinlogSql.DBName != "" && ddlDB != options.BinlogSql.DBName) || (options.BinlogSql.TableName != "" && ddlTable != options.BinlogSql.TableName) {
+			schema.DbName, schema.TableName = ParseDDL(string(e.Query))
+			if (options.BinlogSql.DBName != "" && schema.DbName != options.BinlogSql.DBName) || (options.BinlogSql.TableName != "" && schema.TableName != options.BinlogSql.TableName) {
 				//continue
 				return nil
 			}
@@ -177,25 +193,21 @@ func ParseBinlogSQL(db *sql.DB, streamer *replication.BinlogStreamer, ctx contex
 					log.Error().Err(err).Msg("append SQL to output file failed")
 				}
 			} else {
-				fmt.Printf("-- Generated SQL( Transaction ID: %d, Executed At: %s) %s\n", transactionID, eventTime.Format("2006-01-02 15:04:05"), e.Query)
+				fmt.Printf("/*%s:%d, Executed At: %s*/\n %s;\n", fileName, transactionID, eventTime.Format("2006-01-02 15:04:05"), e.Query)
 			}
 		}
 		return nil
 
 	case *replication.RowsEvent:
-		eventDB := string(e.Table.Schema)
-		eventTable := string(e.Table.Table)
+		schema.DbName = string(e.Table.Schema)
+		schema.TableName = string(e.Table.Table)
 
-		if options.BinlogSql.DBName != "" && eventDB != options.BinlogSql.DBName {
+		if (options.BinlogSql.DBName != "" && schema.DbName != options.BinlogSql.DBName) || (options.BinlogSql.TableName != "" && schema.TableName != options.BinlogSql.TableName) {
 			//continue
 			return nil
 		}
 
-		if options.BinlogSql.TableName != "" && eventTable != options.BinlogSql.TableName {
-			return nil
-		}
-
-		sql, err := generateSQL(db, ev.Header.EventType, e, options.BinlogSql.Mode, transactionID, eventTime)
+		sql, err := generateSQL(db, ev.Header.EventType, e, options.BinlogSql.Mode, transactionID, eventTime, fileName)
 		if err != nil {
 			log.Error().Err(err).Msg("Error generating SQL")
 			return err
@@ -206,7 +218,7 @@ func ParseBinlogSQL(db *sql.DB, streamer *replication.BinlogStreamer, ctx contex
 				log.Error().Err(err).Msg("append SQL to output file failed")
 			}
 		} else {
-			fmt.Printf("-- Generated SQL: %s\n", sql)
+			fmt.Printf("%s\n", sql)
 		}
 		return nil
 
@@ -226,7 +238,15 @@ func ParseBinlogSQL(db *sql.DB, streamer *replication.BinlogStreamer, ctx contex
 			}
 		}
 		return nil
-
+	case *replication.XIDEvent:
+		if (options.BinlogSql.DBName != "" && schema.DbName != options.BinlogSql.DBName) || (options.BinlogSql.TableName != "" && schema.TableName != options.BinlogSql.TableName) {
+			//continue
+			schema.DbName = ""
+			schema.TableName = ""
+			return nil
+		}
+		fmt.Printf("/* Xid=%d, Position=%d */\n", e.XID, ev.Header.LogPos)
+		return nil
 	default:
 		log.Info().Msg(fmt.Sprintf("event is not define: %v", e))
 		return nil
@@ -268,11 +288,11 @@ func parseTime(timeStr string) time.Time {
 	return t
 }
 
-func generateSQL(db *sql.DB, eventType replication.EventType, e *replication.RowsEvent, mode string, transactionID uint32, eventTime time.Time) (string, error) {
+func generateSQL(db *sql.DB, eventType replication.EventType, e *replication.RowsEvent, mode string, transactionID uint32, eventTime time.Time, fileName string) (string, error) {
 	schema := string(e.Table.Schema)
 	table := string(e.Table.Table)
-	tableName := fmt.Sprintf("%s.%s", schema, table)
-	columnNames, err := getColumnNames(db, schema, table)
+
+	tableColumn, err := getColumn(db, schema, table)
 	if err != nil {
 		return "", err
 	}
@@ -281,21 +301,21 @@ func generateSQL(db *sql.DB, eventType replication.EventType, e *replication.Row
 	switch eventType {
 	case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
 		if mode == "flashback" {
-			sqls = generateDeleteSQL(tableName, columnNames, e.Rows)
+			sqls = generateDeleteSQL(tableColumn, e.Rows)
 		} else {
-			sqls = generateInsertSQL(tableName, columnNames, e.Rows)
+			sqls = generateInsertSQL(tableColumn, e.Rows)
 		}
 	case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 		if mode == "flashback" {
-			sqls = generateReverseUpdateSQL(tableName, columnNames, e.Rows)
+			sqls = generateReverseUpdateSQL(tableColumn, e.Rows)
 		} else {
-			sqls = generateUpdateSQL(tableName, columnNames, e.Rows)
+			sqls = generateUpdateSQL(tableColumn, e.Rows)
 		}
 	case replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 		if mode == "flashback" {
-			sqls = generateInsertSQL(tableName, columnNames, e.Rows)
+			sqls = generateInsertSQL(tableColumn, e.Rows)
 		} else {
-			sqls = generateDeleteSQL(tableName, columnNames, e.Rows)
+			sqls = generateDeleteSQL(tableColumn, e.Rows)
 		}
 	default:
 		return "", fmt.Errorf("unsupported event type: %v", eventType)
@@ -303,97 +323,134 @@ func generateSQL(db *sql.DB, eventType replication.EventType, e *replication.Row
 
 	// 将事务 ID 和执行时间添加到每条 SQL 语句中
 	for i, sql := range sqls {
-		sqls[i] = fmt.Sprintf("(Transaction ID: %d, Executed At: %s)\n%s", transactionID, eventTime.Format("2006-01-02 15:04:05"), sql)
+		sqls[i] = fmt.Sprintf("/*%s:%d, Executed At: %s*/\n%s", fileName, transactionID, eventTime.Format("2006-01-02 15:04:05"), sql)
 	}
 
 	return strings.Join(sqls, "\n"), nil
 }
 
-func getColumnNames(db *sql.DB, schema, table string) ([]string, error) {
+func getColumn(db *sql.DB, schema, table string) (TableSchema, error) {
+	var tableColumn TableSchema
+	var column Column
 	if db == nil {
-		return nil, fmt.Errorf("database connection is not available")
+		return tableColumn, fmt.Errorf("database connection is not available")
 	}
-	query := "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION;"
+	tableColumn.DbName = schema
+	tableColumn.TableName = table
+	query := "SELECT COLUMN_NAME,DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION;"
 	rows, err := db.Query(query, schema, table)
 	if err != nil {
-		return nil, err
+		return tableColumn, err
 	}
 	defer rows.Close()
-	var columnNames []string
+
 	for rows.Next() {
-		var columnName string
-		if err := rows.Scan(&columnName); err != nil {
-			return nil, err
+		if err := rows.Scan(&column.Name, &column.Type); err != nil {
+			return tableColumn, err
 		}
-		columnNames = append(columnNames, columnName)
+
+		tableColumn.Columns = append(tableColumn.Columns, column)
 	}
-	return columnNames, nil
+	return tableColumn, nil
 }
 
 // 生成列-值子句的通用函数
-func generateClauses(columnNames []string, values []interface{}, insertFlag bool) []string {
-	clauses := make([]string, len(values))
+func generateClauses(columnNames []Column, values []interface{}, insertFlag bool) []string {
+	clauses := []string{}
+
 	for i, value := range values {
+		if value == nil || value == "" {
+			continue
+		}
+
 		valType, v := FormatValue(value)
+		var clause string
 		if valType == "string" {
 			if insertFlag {
-				clauses[i] = fmt.Sprintf("'%v'", v)
+				clause = fmt.Sprintf("'%v'", v)
 			} else {
-				clauses[i] = fmt.Sprintf("%s='%v'", columnNames[i], v)
+				if columnNames[i].Type == "json" {
+					continue
+				}
+				clause = fmt.Sprintf("%s='%v'", columnNames[i].Name, v)
 			}
 		} else if valType == "int" {
 			if insertFlag {
-				clauses[i] = fmt.Sprintf("%v", v)
+				clause = fmt.Sprintf("%v", v)
 			} else {
-				clauses[i] = fmt.Sprintf("%s=%v", columnNames[i], v)
+				if columnNames[i].Type == "json" {
+					continue
+				}
+				clause = fmt.Sprintf("%s=%v", columnNames[i].Name, v)
+			}
+		} else {
+			if insertFlag {
+				clause = fmt.Sprintf("%v", v)
+			} else {
+				if columnNames[i].Type == "json" {
+					continue
+				}
+				clause = fmt.Sprintf("%s=%v", columnNames[i].Name, v)
 			}
 		}
+		clauses = append(clauses, clause)
 	}
 	return clauses
 }
 
-func generateInsertSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
+func generateInsertSQL(tableColumn TableSchema, rows [][]interface{}) []string {
 	var sqls []string
+	var columnNames []string
+	for _, colName := range tableColumn.Columns {
+		columnNames = append(columnNames, colName.Name)
+	}
 	columns := strings.Join(columnNames, ", ")
+
+	// 用来存储所有行的 VALUES 子句
+	var valuesClauses []string
 	for _, row := range rows {
-		values := generateClauses(columnNames, row, true)
-		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);", tableName, columns, strings.Join(values, ", "))
-		sqls = append(sqls, sql)
+		values := generateClauses(tableColumn.Columns, row, true)
+		valuesClause := fmt.Sprintf("(%s)", strings.Join(values, ", "))
+		valuesClauses = append(valuesClauses, valuesClause)
 	}
+
+	// 将所有 VALUES 子句拼接成一条 SQL 语句
+	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s;", tableColumn.TableName, columns, strings.Join(valuesClauses, ", "))
+	sqls = append(sqls, sql)
 	return sqls
 }
 
-func generateUpdateSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
+func generateUpdateSQL(tableColumn TableSchema, rows [][]interface{}) []string {
 	var sqls []string
 	for i := 0; i < len(rows); i += 2 {
 		before := rows[i]
 		after := rows[i+1]
-		setClauses := generateClauses(columnNames, after, false)
-		whereClauses := generateClauses(columnNames, before, false)
-		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s;", tableName, strings.Join(setClauses, ", "), strings.Join(whereClauses, " AND "))
+		setClauses := generateClauses(tableColumn.Columns, after, false)
+		whereClauses := generateClauses(tableColumn.Columns, before, false)
+		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s;", tableColumn.TableName, strings.Join(setClauses, ", "), strings.Join(whereClauses, " AND "))
 		sqls = append(sqls, sql)
 	}
 	return sqls
 }
 
-func generateReverseUpdateSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
+func generateReverseUpdateSQL(tableColumn TableSchema, rows [][]interface{}) []string {
 	var sqls []string
 	for i := 0; i < len(rows); i += 2 {
 		before := rows[i]
 		after := rows[i+1]
-		setClauses := generateClauses(columnNames, before, false)
-		whereClauses := generateClauses(columnNames, after, false)
-		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s;", tableName, strings.Join(setClauses, ", "), strings.Join(whereClauses, " AND "))
+		setClauses := generateClauses(tableColumn.Columns, before, false)
+		whereClauses := generateClauses(tableColumn.Columns, after, false)
+		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s;", tableColumn.TableName, strings.Join(setClauses, ", "), strings.Join(whereClauses, " AND "))
 		sqls = append(sqls, sql)
 	}
 	return sqls
 }
 
-func generateDeleteSQL(tableName string, columnNames []string, rows [][]interface{}) []string {
+func generateDeleteSQL(tableColumn TableSchema, rows [][]interface{}) []string {
 	var sqls []string
 	for _, row := range rows {
-		whereClauses := generateClauses(columnNames, row, false)
-		sql := fmt.Sprintf("DELETE FROM %s WHERE %s;", tableName, strings.Join(whereClauses, " AND "))
+		whereClauses := generateClauses(tableColumn.Columns, row, false)
+		sql := fmt.Sprintf("DELETE FROM %s WHERE %s;", tableColumn.TableName, strings.Join(whereClauses, " AND "))
 		sqls = append(sqls, sql)
 	}
 	return sqls
@@ -403,10 +460,10 @@ func FormatValue(s interface{}) (string, string) {
 	switch s.(type) {
 	case string:
 		return "string", strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%v", s), "'", `\'`), `"`, `\"`)
-	case int32:
+	case int32, int, int64, int16, int8:
 		return "int", strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%v", s), "'", `\'`), `"`, `\"`)
 	default:
-		return "error", ""
+		return "error", fmt.Sprintf("err:%v", s)
 	}
 
 }

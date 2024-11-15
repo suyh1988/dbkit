@@ -15,7 +15,7 @@ type DaemonOptions struct {
 	ActionType     string
 	CommonDataPath string
 
-	BinlogSql *MysqlBinlogSql
+	BinlogSql *BinlogSql
 	MysqlSync *SyncOption
 
 	Logger *logging.Logger
@@ -29,7 +29,7 @@ func NewDaemonOptions(l *logging.Logger) *DaemonOptions {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &DaemonOptions{
 		Logger:    l,
-		BinlogSql: &MysqlBinlogSql{},
+		BinlogSql: &BinlogSql{},
 		MysqlSync: &SyncOption{},
 		Ctx:       ctx,
 		Cancel:    cancel,

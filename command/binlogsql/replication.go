@@ -68,23 +68,31 @@ func analyzeBinlogFile(fileName string, binlogDir string, parser *replication.Bi
 			// 忽略 FormatDescriptionEvent
 			return nil
 		case *replication.QueryEvent:
-			// 使用 QueryEvent 时间更新 binlog 的开始时间
-			if firstEvent {
-				binlogInfo.StartTime = time.Unix(int64(ev.Header.Timestamp), 0)
-				firstEvent = false
-			}
-			binlogInfo.EndTime = time.Unix(int64(ev.Header.Timestamp), 0)
-			// 解析 SQL 语句
-			sql := strings.ReplaceAll(strings.ToUpper(string(e.Query)), "`", "")
-			if strings.HasPrefix(sql, "CREATE TABLE") || strings.HasPrefix(sql, "DROP TABLE") || strings.HasPrefix(sql, "ALTER TABLE") {
-				tableName, err := extractTableName(sql)
-				if err != nil {
-					log.Info().Err(err).Msg("get table name failed")
+			if options.BinlogSql.DDL != "false" {
+				// 使用 QueryEvent 时间更新 binlog 的开始时间
+				if firstEvent {
+					binlogInfo.StartTime = time.Unix(int64(ev.Header.Timestamp), 0)
+					firstEvent = false
 				}
-				dbTable := fmt.Sprintf("%s.%s", strings.ToLower(string(e.Schema)), strings.ToLower(tableName))
-				binlogInfo.DbTableMap[dbTable] = struct{}{}
-				binlogInfo.Sqls = append(binlogInfo.Sqls, sql)
+				binlogInfo.EndTime = time.Unix(int64(ev.Header.Timestamp), 0)
+				// 解析 SQL 语句
+				sqlStr := strings.ReplaceAll(strings.ToUpper(string(e.Query)), "`", "")
+				ddlRegex := regexp.MustCompile(`(?i)^\s*(CREATE|ALTER|DROP|RENAME|TRUNCATE|ADD|INDEX)\s+(TABLE\s+)?(?:\w+\.)?(?P<table>\w+)`)
+				match := ddlRegex.FindStringSubmatch(sqlStr)
+				if len(match) > 0 {
+					tableName, err := extractTableName(strings.ToUpper(fmt.Sprintf("%v", e.Query)))
+					if err != nil {
+						log.Info().Err(err).Msg("get table name failed")
+					}
+
+					dbTable := fmt.Sprintf("%s.%s", strings.ToLower(string(e.Schema)), strings.ToLower(fmt.Sprintf("%v", tableName)))
+					binlogInfo.DbTableMap[dbTable] = struct{}{}
+
+					sqlStr := fmt.Sprintf("/*%s:%d, Executed At: %s*/\n%s;", fileName, ev.Header.LogPos, time.Unix(int64(ev.Header.Timestamp), 0).Format("2006-01-02 15:04:05"), sqlStr)
+					binlogInfo.Sqls = append(binlogInfo.Sqls, sqlStr)
+				}
 			}
+
 		case *replication.RowsEvent:
 			// 使用 RowsEvent 时间更新 binlog 的开始和结束时间
 			if firstEvent {
@@ -97,7 +105,7 @@ func analyzeBinlogFile(fileName string, binlogDir string, parser *replication.Bi
 			binlogInfo.DbTableMap[dbTable] = struct{}{}
 			transactionID := ev.Header.LogPos
 			eventTime := time.Unix(int64(ev.Header.Timestamp), 0)
-			sql, err := generateSQL(db, ev.Header.EventType, e, options.BinlogSql.Mode, transactionID, eventTime)
+			sql, err := generateSQL(db, ev.Header.EventType, e, options.BinlogSql.Mode, transactionID, eventTime, fileName)
 			if err != nil {
 				fmt.Printf("parse mysql 5.5 binlog error\n")
 			} else {
@@ -122,13 +130,26 @@ func analyzeBinlogFile(fileName string, binlogDir string, parser *replication.Bi
 func extractTableName(sql string) (string, error) {
 	// 定义正则表达式，用于匹配不同类型的SQL语句中的表名
 	patterns := []string{
-		`(?i)INSERT\s+INTO\s+([^\s\(\)]+)`,  // INSERT INTO table_name
-		`(?i)UPDATE\s+([^\s]+)`,             // UPDATE table_name
-		`(?i)DELETE\s+FROM\s+([^\s]+)`,      // DELETE FROM table_name
+		// DML Statements
+		`(?i)INSERT\s+INTO\s+([^\s\(\)]+)`, // INSERT INTO table_name
+		`(?i)UPDATE\s+([^\s]+)`,            // UPDATE table_name
+		`(?i)DELETE\s+FROM\s+([^\s]+)`,     // DELETE FROM table_name
+
+		// DDL Statements
 		`(?i)CREATE\s+TABLE\s+([^\s\(\)]+)`, // CREATE TABLE table_name
 		`(?i)ALTER\s+TABLE\s+([^\s]+)`,      // ALTER TABLE table_name
 		`(?i)DROP\s+TABLE\s+([^\s]+)`,       // DROP TABLE table_name
+		`(?i)TRUNCATE\s+TABLE\s+([^\s]+)`,   // TRUNCATE TABLE table_name
+
+		// Index-related DDL Statements
+		`(?i)CREATE\s+INDEX\s+([^\s]+)\s+ON\s+([^\s\(\)]+)`, // CREATE INDEX index_name ON table_name
+		`(?i)DROP\s+INDEX\s+([^\s]+)\s+ON\s+([^\s]+)`,       // DROP INDEX index_name ON table_name
+
+		// Schema and Database DDL
+		`(?i)CREATE\s+DATABASE\s+([^\s]+)`, // CREATE DATABASE db_name
+		`(?i)DROP\s+DATABASE\s+([^\s]+)`,   // DROP DATABASE db_name
 	}
+	log.Info().Msg(sql)
 
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)

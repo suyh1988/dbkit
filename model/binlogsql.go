@@ -1,6 +1,6 @@
 package model
 
-type MysqlBinlogSql struct {
+type BinlogSql struct {
 	IP         string // mysql IP
 	Port       int    // mysql port
 	User       string // mysql user
