@@ -1,16 +1,103 @@
-mysql_sync:
-  server_id: 8888
-  source_ip: "127.0.0.1"
-  source_port: 3306
-  source_user: "db_monitor"
-  source_password: ""
-  sync_mode: "increase" # or "full"
-  target_type: "redis" # specify the target type, e.g., redis
-  db_name: "your_database_name"
-  table_name: "your_table_name"
+source:
+  serverId: 8888
+  ip: "127.0.0.1"
+  port: 3306
+  user: "db_monitor"
+  password: ""
+  mode: "increase" # or "full"
   charset: "utf8mb4"
+  pos: "mysql-bin.000002:154"
 
-redis:
-  addr: "127.0.0.1:6379"
-  password: "your_redis_password"
-  db: 0
+target:
+  type: redis # 可选值：redis, mongodb, elasticsearch, kafka
+
+  # Redis 配置
+  redis:
+    mode: standalone # 可选值：standalone, sentinel, cluster
+    standalone:
+      addr: "127.0.0.1:6379"
+      password: "your_redis_password"
+      db: 0
+    sentinel:
+      masterName: "mymaster"
+      addrs:
+        - "127.0.0.1:26379"
+        - "127.0.0.2:26379"
+        - "127.0.0.3:26379"
+      password: "your_sentinel_password"
+      db: 0
+    cluster:
+      addrs:
+        - "127.0.0.1:7000"
+        - "127.0.0.2:7001"
+        - "127.0.0.3:7002"
+      password: "your_cluster_password"
+
+  # MongoDB 配置
+  mongodb:
+    uri: "mongodb://user:password@127.0.0.1:27017"
+    database: "my_database"
+    collection: "my_collection"
+    options:
+      maxPoolSize: 10
+      connectTimeoutMS: 3000
+
+  # Elasticsearch 配置
+  elasticsearch:
+    hosts:
+      - "http://127.0.0.1:9200"
+      - "http://127.0.0.2:9200"
+    username: "elastic"
+    password: "your_es_password"
+    index: "my_index"
+    version: 7 # ES版本号，方便兼容不同版本
+    timeout: 5000 # 超时时间，单位为毫秒
+
+  # Kafka 配置
+  kafka:
+    brokers:
+      - "127.0.0.1:9092"
+      - "127.0.0.2:9092"
+    topic: "sync_topic"
+    groupId: "sync_group"
+    sasl:
+      enabled: true
+      mechanism: "PLAIN" # 可选值：PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+      username: "kafka_user"
+      password: "kafka_password"
+    tls:
+      enabled: false
+      caCert: "/path/to/ca-cert.pem" # 可选，TLS CA证书路径
+
+mapping:
+  # 支持多数据库、多表、多字段，字段必须包含主键
+  # table_name redis：key名或前缀，mongodb:collection名， Es索引名， kafka topic名称
+  - database: db_name1
+    tables:
+      - table: table_name1
+        target_name: table_name1
+        columns:
+          - column1
+          - column2
+          - column3
+      - table: table_name2
+        target_name: table_name2
+        columns:
+          - column1
+          - column2
+          - column3
+  - database: db_name2
+    tables:
+      - table: table_name3
+        target_name: table_name3
+        columns:
+          - column1
+          - column2
+          - column3
+      - table: table_name4
+        target_name: table_name4
+        columns:
+          - column1
+          - column2
+          - column3
+

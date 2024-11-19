@@ -3,6 +3,7 @@ package binlogsql
 import (
 	"context"
 	"database/sql"
+	"dbkit/common"
 	"dbkit/model"
 	"errors"
 	"fmt"
@@ -363,7 +364,7 @@ func generateClauses(columnNames []Column, values []interface{}, insertFlag bool
 			continue
 		}
 
-		valType, v := FormatValue(value)
+		valType, v := common.FormatValue(value)
 		var clause string
 		if valType == "string" {
 			if insertFlag {
@@ -454,16 +455,4 @@ func generateDeleteSQL(tableColumn TableSchema, rows [][]interface{}) []string {
 		sqls = append(sqls, sql)
 	}
 	return sqls
-}
-
-func FormatValue(s interface{}) (string, string) {
-	switch s.(type) {
-	case string:
-		return "string", strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%v", s), "'", `\'`), `"`, `\"`)
-	case int32, int, int64, int16, int8:
-		return "int", strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%v", s), "'", `\'`), `"`, `\"`)
-	default:
-		return "error", fmt.Sprintf("err:%v", s)
-	}
-
 }
