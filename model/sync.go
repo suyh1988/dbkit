@@ -6,4 +6,6 @@ type SyncOption struct {
 	WriteTimeInterval     int64
 	PrimaryKeyColumnNames map[string][]string
 	TableColumnMap        map[string][]string
+	RedisWriteMode        string
+	RedisWriteBatchSize   int
 }

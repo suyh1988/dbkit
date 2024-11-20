@@ -28,6 +28,18 @@ func BinlogActionFlag(options *model.DaemonOptions) []cli.Flag {
 			Usage:       "write position to configure file interval of time(second)",
 			Destination: &options.MysqlSync.WriteTimeInterval,
 		},
+		cli.StringFlag{
+			Name:        "redis_write_mode",
+			Value:       "batch", // batch single
+			Usage:       "write data to redis mode when full dump ",
+			Destination: &options.MysqlSync.RedisWriteMode,
+		},
+		cli.IntFlag{
+			Name:        "redis_write_batch_size",
+			Value:       1000,
+			Usage:       "write data to redis batch size when full dump",
+			Destination: &options.MysqlSync.RedisWriteBatchSize,
+		},
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"dbkit/command/binlogsql"
 	"dbkit/conf"
 	"dbkit/model"
+	"errors"
 	"fmt"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
@@ -33,6 +34,7 @@ func Run(options *model.DaemonOptions, _args []string) error {
 	// 初始化数据源 MySQL 连接
 	db, err := initMySQL(SyncConfig)
 	if err != nil {
+		log.Error().Err(err).Msg("init mysql connection error")
 		return err
 	}
 	defer db.Close()
@@ -58,28 +60,50 @@ func Run(options *model.DaemonOptions, _args []string) error {
 		return err
 	}
 
-	// 初始化数据源同步模式
+	// 获取所有表的主键字段
+	for _, mapping := range SyncConfig.Mapping {
+		for _, table := range mapping.Tables {
+			primaryKeyColumnNames, err := getPrimaryKeysColumnNames(db, mapping.Database, table.Table)
+			if err != nil {
+				return fmt.Errorf("failed to get primary keys for %s.%s: %v", mapping.Database, table.Table, err)
+			}
+			options.MysqlSync.PrimaryKeyColumnNames[mapping.Database+"."+table.Table] = primaryKeyColumnNames
+		}
+	}
+
+	// 检查数据源同步模式
 	var position *mysql.Position
-	if SyncConfig.Source.Mode == "increase" {
+	switch SyncConfig.Source.Mode {
+	case "increase":
 		err, position = CheckBinlogPosOK(SyncConfig.Source.Pos, db)
 		if err != nil {
-			log.Warn().Msg("增量同步位点无效，切换为全量同步")
+			log.Info().Msg("增量同步位点无效，切换为全量同步")
 			SyncConfig.Source.Mode = "full"
+		} else {
+			log.Info().Msg(fmt.Sprintf("sync mode increase ,begin at %s", position.String()))
 		}
+
+	case "full":
+		log.Info().Msg(fmt.Sprintf("sync mode:%s", SyncConfig.Source.Mode))
+	default:
+		msg := fmt.Sprintf("sync mode configrue error: %s", SyncConfig.Source.Mode)
+		log.Error().Msg(msg)
+		return errors.New(msg)
 	}
 
 	//目标端处理
 	switch SyncConfig.Target.Type {
 	case "redis":
 		// 初始化目标客户端（Redis）
-		redisClient, err := initRedis(SyncConfig)
+		redisClient, addrInfo, err := initRedis(SyncConfig)
 		if err != nil {
+			log.Error().Err(err).Msg("init redis client error")
 			return err
 		}
 		defer redisClient.Close()
 
 		if SyncConfig.Source.Mode == "full" {
-			log.Info().Msg("开始全量同步 MySQL 数据到 Redis")
+			log.Info().Msg(fmt.Sprintf("开始全量同步 MySQL 数据到 Redis %s", addrInfo))
 			//全量同步
 			position, err = DumpFullMySQLTableToRedis(db, SyncConfig, &redisClient, options, 3)
 			if err != nil {
@@ -87,7 +111,7 @@ func Run(options *model.DaemonOptions, _args []string) error {
 				return err
 			}
 			log.Info().Msg("全量同步成功")
-			err = conf.UpdateBinlogPos(options.MysqlSync.ConfigFile, position.String())
+			err = conf.UpdateBinlogPos(options.MysqlSync.ConfigFile, fmt.Sprintf("%s:%s", position.Name, position.Pos))
 			if err != nil {
 				log.Error().Err(err).Msg(fmt.Sprintf("save binlog to %s failed: %s", options.MysqlSync.ConfigFile, position.String()))
 				return err
@@ -96,7 +120,7 @@ func Run(options *model.DaemonOptions, _args []string) error {
 		}
 
 		// 开始增量同步
-		log.Info().Msgf("增量同步开始，位点: %s:%d", position.Name, position.Pos)
+		log.Info().Msg(fmt.Sprintf("增量同步到Redis %s, pos %s:%d", addrInfo, position.Name, position.Pos))
 		return syncBinlogToRedis(syncer, &redisClient, position, SyncConfig, options, db)
 
 	case "mongodb":

@@ -17,28 +17,28 @@ import (
 var PrimaryKeyIndex []int
 
 // 初始化 Redis 客户端
-func initRedis(config *conf.Config) (redis.UniversalClient, error) {
+func initRedis(config *conf.Config) (redis.UniversalClient, string, error) {
 	switch config.Redis.Mode {
 	case "standalone":
 		return redis.NewClient(&redis.Options{
 			Addr:     config.Redis.Standalone.Addr,
 			Password: config.Redis.Standalone.Password,
 			DB:       config.Redis.Standalone.DB,
-		}), nil
+		}), config.Redis.Mode + " " + config.Redis.Standalone.Addr, nil
 	case "sentinel":
 		return redis.NewFailoverClient(&redis.FailoverOptions{
 			MasterName:    config.Redis.Sentinel.MasterName,
 			SentinelAddrs: config.Redis.Sentinel.Addrs,
 			Password:      config.Redis.Sentinel.Password,
 			DB:            config.Redis.Sentinel.DB,
-		}), nil
+		}), config.Redis.Mode + " " + strings.Join(config.Redis.Sentinel.Addrs, ";"), nil
 	case "cluster":
 		return redis.NewClusterClient(&redis.ClusterOptions{
 			Addrs:    config.Redis.Cluster.Addrs,
 			Password: config.Redis.Cluster.Password,
-		}), nil
+		}), config.Redis.Mode + " " + strings.Join(config.Redis.Cluster.Addrs, ";"), nil
 	default:
-		return nil, fmt.Errorf("不支持的 Redis 模式: %s", config.Redis.Mode)
+		return nil, "", fmt.Errorf("不支持的 Redis 模式: %s", config.Redis.Mode)
 	}
 }
 
@@ -49,6 +49,7 @@ func syncBinlogToRedis(syncer *replication.BinlogSyncer, redisClient *redis.Univ
 		log.Error().Err(err).Msg("启动 Binlog 同步失败")
 		return err
 	}
+	log.Info().Msg("increase sync begin running...")
 
 	var i int64
 	t := time.Duration(options.MysqlSync.WriteTimeInterval) * time.Second
@@ -75,10 +76,11 @@ func syncBinlogToRedis(syncer *replication.BinlogSyncer, redisClient *redis.Univ
 				log.Error().Err(err).Msg("读取 Binlog 事件失败")
 				return err
 			}
+			position.Pos = ev.Header.LogPos
 
 			// 每达到事件阈值刷新位点
 			if i%options.MysqlSync.WriteEventInterval == 0 {
-				err = conf.UpdateBinlogPos(options.MysqlSync.ConfigFile, fmt.Sprintf("%s:%d", position.Name, ev.Header.LogPos))
+				err = conf.UpdateBinlogPos(options.MysqlSync.ConfigFile, fmt.Sprintf("%s:%d", position.Name, position.Pos))
 				if err != nil {
 					log.Error().Err(err).Msg(fmt.Sprintf("事件触发时保存 Binlog 位点失败: %s", position.String()))
 					return err
@@ -98,7 +100,6 @@ func syncBinlogToRedis(syncer *replication.BinlogSyncer, redisClient *redis.Univ
 						}
 					}
 				}
-
 			case *replication.RotateEvent:
 				position.Name = string(e.NextLogName)
 				position.Pos = uint32(e.Position)
@@ -162,10 +163,13 @@ func handleInsertEvent(client redis.UniversalClient, syncConf *conf.Config, e *r
 					columns := options.MysqlSync.TableColumnMap[eventDB+"."+eventTable]
 					for _, row := range e.Rows {
 						redisKey = generateRedisKey(table.Table, row, table.Columns, options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table])
+						log.Info().Msg(fmt.Sprintf("redisKey:%s", redisKey))
 						for i, col := range columns {
-							for _, selectColumn := range table.Columns {
-								if strings.ToLower(col) == strings.ToLower(selectColumn) {
-									data[col] = row[i]
+							if i <= len(row)-1 { //避免因为数据表加了字段，导致从元数据获得的列大于binlog中的列
+								for _, selectColumn := range table.Columns {
+									if strings.ToLower(col) == strings.ToLower(selectColumn) {
+										data[col] = row[i]
+									}
 								}
 							}
 						}
@@ -240,7 +244,7 @@ func handleDeleteEvent(client redis.UniversalClient, syncConf *conf.Config, e *r
 					}
 
 					// 打印调试信息
-					log.Info().Str("key", redisKey).Interface("data", data).Msg("Debugging Redis Del")
+					log.Debug().Str("key", redisKey).Interface("data", data).Msg("Debugging Redis Del")
 				}
 			}
 		}
@@ -253,10 +257,12 @@ func handleDeleteEvent(client redis.UniversalClient, syncConf *conf.Config, e *r
 func generateRedisKey(table string, row []interface{}, columns []string, primaryKeyColumnNames []string) string {
 	var keyParts []string
 	keyParts = append(keyParts, table)
+	//log.Info().Msg(fmt.Sprintf("row data: %v, columns: %v, pk name:%v", row, columns, primaryKeyColumnNames))
 
 	// 使用主键列名找到对应的值，并构建 Redis 键
 	for _, pk := range primaryKeyColumnNames {
 		for i, col := range columns {
+			//log.Info().Msg(fmt.Sprintf("debug: col-%v pk-%v", col, pk))
 			if strings.ToLower(col) == strings.ToLower(pk) {
 				value := row[i]
 				switch v := value.(type) {

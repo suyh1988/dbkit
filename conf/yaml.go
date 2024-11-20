@@ -144,5 +144,6 @@ func UpdateBinlogPos(conFile string, newPos string) error {
 		return err
 	}
 
+	log.Info().Msg(fmt.Sprintf("sync to %s", newPos))
 	return nil
 }

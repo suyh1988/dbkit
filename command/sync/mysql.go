@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type BinlogPosition struct {
@@ -45,17 +46,6 @@ func DumpFullMySQLTableToRedis(db *sql.DB, conf *conf.Config, rdb *redis.Univers
 		err       error
 	)
 
-	// 获取所有表的主键字段
-	for _, mapping := range conf.Mapping {
-		for _, table := range mapping.Tables {
-			primaryKeyColumnNames, err := getPrimaryKeysColumnNames(db, mapping.Database, table.Table)
-			if err != nil {
-				return &binlogPos, fmt.Errorf("failed to get primary keys for %s.%s: %v", mapping.Database, table.Table, err)
-			}
-			options.MysqlSync.PrimaryKeyColumnNames[mapping.Database+"."+table.Table] = primaryKeyColumnNames
-		}
-	}
-
 	// 开启一致性视图
 	tx, err := db.BeginTx(options.Ctx, nil)
 	if err != nil {
@@ -82,22 +72,18 @@ func DumpFullMySQLTableToRedis(db *sql.DB, conf *conf.Config, rdb *redis.Univers
 
 	// 使用 Goroutines 并行导出多个表的数据
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, concurrencyLimit) // 控制并发的信号量
 
 	// 遍历配置，处理每个表的数据
 	for _, mapping := range conf.Mapping {
 		for _, table := range mapping.Tables {
-			wg.Add(1)
-			sem <- struct{}{} // 获取信号量
-			go func(schema, tableName string, primaryKeyColumnNames []string, columns []string) {
-				defer wg.Done()
-				defer func() { <-sem }() // 释放信号量
-
-				err := dumpSingleTableData(tx, *rdb, schema, tableName, primaryKeyColumnNames, columns, options, concurrencyLimit)
-				if err != nil {
-					log.Error().Err(err).Msgf("Failed to dump table %s.%s", schema, tableName)
-				}
-			}(mapping.Database, table.Table, options.MysqlSync.PrimaryKeyColumnNames[mapping.Database+"."+table.Table], table.Columns)
+			if options.MysqlSync.RedisWriteMode == "batch" {
+				err = dumpSingleTableDataBatch(tx, *rdb, mapping.Database, table.Table, options.MysqlSync.PrimaryKeyColumnNames[mapping.Database+"."+table.Table], table.Columns, options, options.MysqlSync.RedisWriteBatchSize)
+			} else {
+				err = dumpSingleTableData(tx, *rdb, mapping.Database, table.Table, options.MysqlSync.PrimaryKeyColumnNames[mapping.Database+"."+table.Table], table.Columns, options, concurrencyLimit)
+			}
+			if err != nil {
+				log.Error().Err(err).Msgf("Failed to dump table %s.%s", mapping.Database, table.Table)
+			}
 		}
 	}
 
@@ -174,8 +160,95 @@ func CheckBinlogPosOK(pos string, db *sql.DB) (error, *mysql.Position) {
 
 }
 
-func dumpSingleTableData(tx *sql.Tx, rdb redis.UniversalClient, schema string, table string, primaryKeyColumnNames []string, columns []string, options *model.DaemonOptions, concurrencyLimit int) error {
-	// 构建仅查询指定列的 SQL 语句
+func dumpSingleTableDataBatch(tx *sql.Tx, rdb redis.UniversalClient, schema string, table string, PKColNames []string, columns []string, options *model.DaemonOptions, batchSize int) error {
+	columnList := strings.Join(columns, ",")
+	query := fmt.Sprintf("SELECT %s FROM %s.%s;", columnList, schema, table)
+
+	// 执行查询
+	rows, err := tx.Query(query)
+	if err != nil {
+		return fmt.Errorf("failed to query table %s.%s: %v", schema, table, err)
+	}
+	defer rows.Close()
+
+	// 获取列名
+	dbColumns, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("failed to get column names for %s.%s: %v", schema, table, err)
+	}
+	if len(dbColumns) != len(columns) {
+		return fmt.Errorf("mismatch in requested and retrieved columns for %s.%s", schema, table)
+	}
+
+	// 缓存批量写入的键值对
+	batch := make(map[string]map[string]interface{})
+
+	// 定义批量写入逻辑
+	writeBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+
+		pipe := rdb.Pipeline() // 创建 Pipeline
+		for key, fields := range batch {
+			pipe.HMSet(options.Ctx, key, fields)
+		}
+
+		if _, err := pipe.Exec(options.Ctx); err != nil {
+			log.Error().Err(err).Msg("Failed to execute batch Redis writes")
+			return err
+		}
+
+		//每个批量间间隔50毫秒
+		time.Sleep(50 * time.Millisecond)
+		log.Debug().Msgf("Successfully wrote %d keys to Redis", len(batch))
+		batch = make(map[string]map[string]interface{}) // 清空缓存
+		return nil
+	}
+
+	for rows.Next() {
+		// 存储当前行数据
+		values := make([]sql.RawBytes, len(columns))
+		scanArgs := make([]interface{}, len(columns))
+		for i := range values {
+			scanArgs[i] = &values[i]
+		}
+
+		// 读取数据并创建独立拷贝
+		if err := rows.Scan(scanArgs...); err != nil {
+			return fmt.Errorf("failed to scan rows for %s.%s: %v", schema, table, err)
+		}
+
+		// 将数据添加到批量缓存中
+		rowData := make(map[string]interface{})
+		for i, col := range columns {
+			rowData[col] = string(values[i])
+		}
+
+		redisKey := generateRedisKey(table, scanArgs, columns, PKColNames)
+		batch[redisKey] = rowData
+
+		// 如果达到批量大小，写入 Redis
+		if len(batch) >= batchSize {
+			if err := writeBatch(); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 写入剩余未达到批量大小的数据
+	if err := writeBatch(); err != nil {
+		return err
+	}
+
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("rows iteration error for %s.%s: %v", schema, table, err)
+	}
+
+	return nil
+}
+
+func dumpSingleTableData(tx *sql.Tx, rdb redis.UniversalClient, schema string, table string, PKColNames []string, columns []string, options *model.DaemonOptions, conLimit int) error {
 	columnList := strings.Join(columns, ",")
 	query := fmt.Sprintf("SELECT %s FROM %s.%s;", columnList, schema, table)
 
@@ -185,7 +258,6 @@ func dumpSingleTableData(tx *sql.Tx, rdb redis.UniversalClient, schema string, t
 	}
 	defer rows.Close()
 
-	// 获取列名（与传入的列应该一致，但做校验以防错误）
 	dbColumns, err := rows.Columns()
 	if err != nil {
 		return fmt.Errorf("failed to get column names for %s.%s: %v", schema, table, err)
@@ -195,41 +267,41 @@ func dumpSingleTableData(tx *sql.Tx, rdb redis.UniversalClient, schema string, t
 	}
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, concurrencyLimit) // 控制并发数量
+	sem := make(chan struct{}, conLimit)
 
 	for rows.Next() {
-		// 存储一行的数据
+		// 存储当前行数据
 		values := make([]sql.RawBytes, len(columns))
 		scanArgs := make([]interface{}, len(columns))
 		for i := range values {
 			scanArgs[i] = &values[i]
 		}
 
-		err = rows.Scan(scanArgs...)
-		if err != nil {
+		// 读取数据并创建独立拷贝
+		if err := rows.Scan(scanArgs...); err != nil {
 			return fmt.Errorf("failed to scan rows for %s.%s: %v", schema, table, err)
 		}
 
+		rowData := make(map[string]string)
+		for i, col := range columns {
+			rowData[col] = string(values[i])
+		}
+
 		wg.Add(1)
-		sem <- struct{}{} // 获取信号量
-		go func(scanArgs []interface{}, values []sql.RawBytes) {
+		sem <- struct{}{}
+		go func(rowData map[string]string) {
 			defer wg.Done()
-			defer func() { <-sem }() // 释放信号量
+			defer func() { <-sem }()
 
-			// 构建 Redis key
-			redisKey := generateRedisKey(table, scanArgs, columns, primaryKeyColumnNames)
-			data := make(map[string]interface{})
-			for i, col := range columns {
-				data[col] = string(values[i])
-			}
+			redisKey := generateRedisKey(table, scanArgs, columns, PKColNames)
 
-			if err := rdb.HMSet(options.Ctx, redisKey, data).Err(); err != nil {
-				log.Error().Err(err).Msg(fmt.Sprintf("Failed to write to Redis: key=%s", redisKey))
+			if err := rdb.HMSet(options.Ctx, redisKey, rowData).Err(); err != nil {
+				log.Error().Err(err).Msgf("Failed to write to Redis: key=%s", redisKey)
 			}
-		}(scanArgs, values)
+		}(rowData)
 	}
 
-	// 等待所有 Goroutines 完成
+	// 等待所有 Goroutine 完成
 	wg.Wait()
 
 	if err = rows.Err(); err != nil {
