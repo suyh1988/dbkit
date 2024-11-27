@@ -2,8 +2,8 @@ package binlogsql
 
 import (
 	"database/sql"
-	"dbkit/model"
 	"errors"
+	"example.com/m/v2/model"
 	"fmt"
 	"regexp"
 	"strings"

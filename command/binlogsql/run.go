@@ -3,9 +3,9 @@ package binlogsql
 import (
 	"context"
 	"database/sql"
-	"dbkit/common"
-	"dbkit/model"
 	"errors"
+	"example.com/m/v2/common"
+	"example.com/m/v2/model"
 	"fmt"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"

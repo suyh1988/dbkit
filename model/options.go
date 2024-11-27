@@ -2,7 +2,8 @@ package model
 
 import (
 	"context"
-	"dbkit/logging"
+	"example.com/m/v2/logging"
+
 	"fmt"
 	"github.com/rs/zerolog/log"
 )
@@ -15,8 +16,9 @@ type DaemonOptions struct {
 	ActionType     string
 	CommonDataPath string
 
-	BinlogSql *BinlogSql
-	MysqlSync *SyncOption
+	BinlogSql       *BinlogSql
+	MysqlSync       *SyncOption
+	MysqlDumpFilter *Filter
 
 	Logger *logging.Logger
 	Ctx    context.Context
@@ -28,11 +30,12 @@ func NewDaemonOptions(l *logging.Logger) *DaemonOptions {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &DaemonOptions{
-		Logger:    l,
-		BinlogSql: &BinlogSql{},
-		MysqlSync: &SyncOption{},
-		Ctx:       ctx,
-		Cancel:    cancel,
+		Logger:          l,
+		BinlogSql:       &BinlogSql{},
+		MysqlSync:       &SyncOption{},
+		MysqlDumpFilter: &Filter{},
+		Ctx:             ctx,
+		Cancel:          cancel,
 	}
 }
 

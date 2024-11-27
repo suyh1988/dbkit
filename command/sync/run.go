@@ -1,10 +1,10 @@
 package sync
 
 import (
-	"dbkit/command/binlogsql"
-	"dbkit/conf"
-	"dbkit/model"
 	"errors"
+	"example.com/m/v2/command/binlogsql"
+	"example.com/m/v2/conf"
+	"example.com/m/v2/model"
 	"fmt"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"

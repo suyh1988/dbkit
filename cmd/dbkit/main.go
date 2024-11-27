@@ -1,11 +1,11 @@
 package main
 
 import (
-	"dbkit/command"
-	"dbkit/logging"
-	"dbkit/model"
-	"dbkit/pkg/config"
-	"dbkit/pkg/util"
+	"example.com/m/v2/command"
+	"example.com/m/v2/logging"
+	"example.com/m/v2/model"
+	"example.com/m/v2/pkg/config"
+	"example.com/m/v2/pkg/util"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 	"os"

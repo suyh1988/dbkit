@@ -2,9 +2,9 @@ package sync
 
 import (
 	"database/sql"
-	"dbkit/conf"
-	"dbkit/model"
 	"errors"
+	"example.com/m/v2/conf"
+	"example.com/m/v2/model"
 	"fmt"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-redis/redis/v8"

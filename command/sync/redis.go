@@ -2,8 +2,8 @@ package sync
 
 import (
 	"database/sql"
-	"dbkit/conf"
-	"dbkit/model"
+	"example.com/m/v2/conf"
+	"example.com/m/v2/model"
 	"fmt"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
@@ -157,15 +157,25 @@ func handleInsertEvent(client redis.UniversalClient, syncConf *conf.Config, e *r
 		if confMap.Database == string(e.Table.Schema) {
 			for _, table := range confMap.Tables {
 				if table.Table == string(e.Table.Table) {
-					data := make(map[string]interface{})
+					//data := make(map[string]interface{})
 					eventDB := string(e.Table.Schema)
 					eventTable := string(e.Table.Table)
 					columns := options.MysqlSync.TableColumnMap[eventDB+"."+eventTable]
+					rowsBatch := make(map[string]map[string]interface{}) // 批量缓存
+
 					for _, row := range e.Rows {
-						redisKey = generateRedisKey(table.Table, row, table.Columns, options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table])
-						log.Info().Msg(fmt.Sprintf("redisKey:%s", redisKey))
+						redisKey = generateRedisKey(
+							table.Table,
+							row,
+							table.Columns,
+							options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table],
+						)
+						//log.Info().Msg(fmt.Sprintf("redisKey:%s", redisKey))
+
+						// 构造当前行的数据
+						data := make(map[string]interface{})
 						for i, col := range columns {
-							if i <= len(row)-1 { //避免因为数据表加了字段，导致从元数据获得的列大于binlog中的列
+							if i <= len(row)-1 { // 避免因为数据表加了字段，导致从元数据获得的列大于 binlog 中的列
 								for _, selectColumn := range table.Columns {
 									if strings.ToLower(col) == strings.ToLower(selectColumn) {
 										data[col] = row[i]
@@ -173,14 +183,26 @@ func handleInsertEvent(client redis.UniversalClient, syncConf *conf.Config, e *r
 								}
 							}
 						}
-						// 写入 Redis
-						if err := client.HMSet(options.Ctx, redisKey, data).Err(); err != nil {
-							log.Error().Err(err).Msg(fmt.Sprintf("Failed to write to Redis: key=%s", redisKey))
-						}
 
-						// 打印调试信息
-						log.Debug().Str("key", redisKey).Interface("data", data).Msg("Debugging Redis HSet input")
+						// 添加到批量缓存
+						rowsBatch[redisKey] = data
+
+						// 如果达到批量大小，写入 Redis
+						if len(rowsBatch) >= options.MysqlSync.RedisWriteBatchSize {
+							if err := writeBatchToRedis(client, rowsBatch, options); err != nil {
+								log.Error().Err(err).Msg("Failed to write batch to Redis")
+							}
+							rowsBatch = make(map[string]map[string]interface{}) // 清空缓存
+						}
 					}
+
+					// 写入剩余数据
+					if len(rowsBatch) > 0 {
+						if err := writeBatchToRedis(client, rowsBatch, options); err != nil {
+							log.Error().Err(err).Msg("Failed to write final batch to Redis")
+						}
+					}
+
 				}
 			}
 		}
@@ -196,31 +218,76 @@ func handleUpdateEvent(client redis.UniversalClient, syncConf *conf.Config, e *r
 		if confMap.Database == string(e.Table.Schema) {
 			for _, table := range confMap.Tables {
 				if table.Table == string(e.Table.Table) {
-					data := make(map[string]interface{})
+					//data := make(map[string]interface{})
 					eventDB := string(e.Table.Schema)
 					eventTable := string(e.Table.Table)
 					columns := options.MysqlSync.TableColumnMap[eventDB+"."+eventTable]
+					/*
+						for i := 0; i < len(e.Rows); i += 2 {
+							_ = e.Rows[i]
+							after := e.Rows[i+1]
+							// 生成 Redis Key
+							redisKey = generateRedisKey(table.Table, after, table.Columns, options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table])
+							for i, col := range columns {
+								for _, selectColumn := range table.Columns {
+									if strings.ToLower(col) == strings.ToLower(selectColumn) {
+										data[col] = after[i]
+									}
+								}
+							}
+							// 写入 Redis
+							if err := client.HMSet(options.Ctx, redisKey, data).Err(); err != nil {
+								log.Error().Err(err).Msg(fmt.Sprintf("Failed to write to Redis: key=%s", redisKey))
+							}
+
+							// 打印调试信息
+							log.Debug().Str("key", redisKey).Interface("data", data).Msg("Debugging Redis HSet update")
+						}
+					*/
+
+					rowsBatch := make(map[string]map[string]interface{}) // 批量缓存
+
 					for i := 0; i < len(e.Rows); i += 2 {
 						_ = e.Rows[i]
 						after := e.Rows[i+1]
-						// 生成 Redis Key
-						redisKey = generateRedisKey(table.Table, after, table.Columns, options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table])
+						redisKey = generateRedisKey(
+							table.Table,
+							after,
+							table.Columns,
+							options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table],
+						)
+						//log.Info().Msg(fmt.Sprintf("redisKey:%s", redisKey))
+
+						// 构造当前行的数据
+						data := make(map[string]interface{})
 						for i, col := range columns {
-							for _, selectColumn := range table.Columns {
-								if strings.ToLower(col) == strings.ToLower(selectColumn) {
-									data[col] = after[i]
+							if i <= len(after)-1 { // 避免因为数据表加了字段，导致从元数据获得的列大于 binlog 中的列
+								for _, selectColumn := range table.Columns {
+									if strings.ToLower(col) == strings.ToLower(selectColumn) {
+										data[col] = after[i]
+									}
 								}
 							}
 						}
-						// 写入 Redis
-						if err := client.HMSet(options.Ctx, redisKey, data).Err(); err != nil {
-							log.Error().Err(err).Msg(fmt.Sprintf("Failed to write to Redis: key=%s", redisKey))
-						}
 
-						// 打印调试信息
-						log.Debug().Str("key", redisKey).Interface("data", data).Msg("Debugging Redis HSet update")
+						// 添加到批量缓存
+						rowsBatch[redisKey] = data
+
+						// 如果达到批量大小，写入 Redis
+						if len(rowsBatch) >= options.MysqlSync.RedisWriteBatchSize {
+							if err := writeBatchToRedis(client, rowsBatch, options); err != nil {
+								log.Error().Err(err).Msg("Failed to write batch to Redis")
+							}
+							rowsBatch = make(map[string]map[string]interface{}) // 清空缓存
+						}
 					}
 
+					// 写入剩余数据
+					if len(rowsBatch) > 0 {
+						if err := writeBatchToRedis(client, rowsBatch, options); err != nil {
+							log.Error().Err(err).Msg("Failed to write final batch to Redis")
+						}
+					}
 				}
 			}
 		}
@@ -230,21 +297,20 @@ func handleUpdateEvent(client redis.UniversalClient, syncConf *conf.Config, e *r
 }
 
 func handleDeleteEvent(client redis.UniversalClient, syncConf *conf.Config, e *replication.RowsEvent, options *model.DaemonOptions) error {
-	var redisKey string
+	var redisKeys []string
 	// 遍历配置的映射关系
 	for _, confMap := range syncConf.Mapping {
 		if confMap.Database == string(e.Table.Schema) {
 			for _, table := range confMap.Tables {
 				if table.Table == string(e.Table.Table) {
-					data := make(map[string]interface{})
-
 					for _, row := range e.Rows {
-						redisKey = generateRedisKey(table.Table, row, table.Columns, options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table])
-						client.Del(options.Ctx, redisKey)
+						redisKey := generateRedisKey(table.Table, row, table.Columns, options.MysqlSync.PrimaryKeyColumnNames[confMap.Database+"."+table.Table])
+						redisKeys = append(redisKeys, redisKey)
 					}
+					re := client.Del(options.Ctx, redisKeys...)
 
 					// 打印调试信息
-					log.Debug().Str("key", redisKey).Interface("data", data).Msg("Debugging Redis Del")
+					log.Info().Msg(fmt.Sprintf("batch delete result:%s", re.String()))
 				}
 			}
 		}
@@ -279,4 +345,20 @@ func generateRedisKey(table string, row []interface{}, columns []string, primary
 		}
 	}
 	return strings.Join(keyParts, ":")
+}
+
+func writeBatchToRedis(client redis.UniversalClient, batch map[string]map[string]interface{}, options *model.DaemonOptions) error {
+	pipe := client.Pipeline()
+	for key, fields := range batch {
+		pipe.HMSet(options.Ctx, key, fields)
+	}
+
+	_, err := pipe.Exec(options.Ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to execute batch Redis writes")
+		return err
+	}
+
+	log.Debug().Msgf("Successfully wrote %d keys to Redis", len(batch))
+	return nil
 }

@@ -131,7 +131,7 @@ func saveConfig(conFile string, config *Config) error {
 	return nil
 }
 
-// UpdateBinlogPos 更新 binlog_pos 并保存到文件
+// 更新binlog_pos并保存到文件
 func UpdateBinlogPos(conFile string, newPos string) error {
 	config, err := ReadConf(conFile)
 	if err != nil {
@@ -144,6 +144,6 @@ func UpdateBinlogPos(conFile string, newPos string) error {
 		return err
 	}
 
-	log.Info().Msg(fmt.Sprintf("sync to %s", newPos))
+	//log.Info().Msg(fmt.Sprintf("sync to %s", newPos))
 	return nil
 }

@@ -1,7 +1,7 @@
 package binlogsql
 
 import (
-	"dbkit/model"
+	"example.com/m/v2/model"
 	"fmt"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"

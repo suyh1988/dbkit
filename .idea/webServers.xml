@@ -2,7 +2,7 @@
 <project version="4">
   <component name="WebServers">
     <option name="servers">
-      <webServer id="29c7a329-b067-4512-842f-8ca33ba699de" name="135">
+      <webServer id="9f16b08b-dc66-4e3f-9b72-70ab8d8eb5bd" name="135">
         <fileTransfer accessType="SFTP" host="192.168.78.135" port="22" sshConfigId="79b12096-ded4-411b-95cf-e99f7f72a2e4" sshConfig="root@192.168.78.135:22 password">
           <advancedOptions>
             <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
