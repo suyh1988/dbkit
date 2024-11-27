@@ -85,11 +85,9 @@ func (logger *Logger) ReConfigure(name string) {
 	}
 	logger.config.Filename = name + ".log"
 	mw := newRollingFile(*logger.config)
-<<<<<<< HEAD
+
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
-=======
-	//zerolog.SetGlobalLevel(zerolog.InfoLevel)
->>>>>>> 9a9af1027f37ad5c37dfde516c40aab107a75600
+
 	l := zerolog.New(mw).With().Timestamp().Caller().Logger()
 	logger.w = mw
 	logger.Logger = &l
