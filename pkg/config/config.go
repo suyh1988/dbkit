@@ -1,8 +1,13 @@
 package config
 
 import (
+<<<<<<< HEAD
 	"errors"
 	"example.com/m/v2/model"
+=======
+	"dbkit/model"
+	"errors"
+>>>>>>> 9a9af1027f37ad5c37dfde516c40aab107a75600
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"

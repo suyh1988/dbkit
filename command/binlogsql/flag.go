@@ -1,7 +1,11 @@
 package binlogsql
 
 import (
+<<<<<<< HEAD
 	"example.com/m/v2/model"
+=======
+	"dbkit/model"
+>>>>>>> 9a9af1027f37ad5c37dfde516c40aab107a75600
 	"fmt"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -49,7 +53,11 @@ func BinlogActionFlag(options *model.DaemonOptions) []cli.Flag {
 		cli.StringFlag{
 			Name:        "mode",
 			Value:       "general",
+<<<<<<< HEAD
 			Usage:       "sql mode: flashback(restore sql); general(get binlog sql); stat(get binlog file statistics of write info)",
+=======
+			Usage:       "mysql binlog sql return mode:flashback/general; \nflashback:return restore sql; general:return general sql",
+>>>>>>> 9a9af1027f37ad5c37dfde516c40aab107a75600
 			Destination: &options.BinlogSql.Mode,
 		},
 		cli.IntFlag{
@@ -101,6 +109,7 @@ func BinlogActionFlag(options *model.DaemonOptions) []cli.Flag {
 			Usage:       "binlog start start time",
 			Destination: &options.BinlogSql.StopTime,
 		},
+<<<<<<< HEAD
 		cli.StringFlag{
 			Name:        "output",
 			Value:       "",
@@ -130,14 +139,26 @@ func BinlogActionFlag(options *model.DaemonOptions) []cli.Flag {
 			Value:       "",
 			Usage:       "binlog file dir",
 			Destination: &options.BinlogSql.BinlogDir,
+=======
+		cli.IntFlag{
+			Name:        "list",
+			Value:       0,
+			Usage:       "binlog start start time",
+			Destination: &options.BinlogSql.List,
+>>>>>>> 9a9af1027f37ad5c37dfde516c40aab107a75600
 		},
 	}
 }
 
 func NewBinlogSqlCommand(options *model.DaemonOptions) cli.Command {
 	return cli.Command{
+<<<<<<< HEAD
 		Name:  "binlogsql",
 		Usage: "get sql or flash back from binlog",
+=======
+		Name:  "binlogserver",
+		Usage: "mysql binlog server",
+>>>>>>> 9a9af1027f37ad5c37dfde516c40aab107a75600
 		Flags: BinlogActionFlag(options),
 		Action: func(c *cli.Context) error {
 			if options.Debug {
@@ -145,7 +166,11 @@ func NewBinlogSqlCommand(options *model.DaemonOptions) cli.Command {
 			}
 			// 执行实际操作
 			if err := Run(options, c.Args()); err != nil {
+<<<<<<< HEAD
 				log.Error().Err(err).Msg(fmt.Sprintf("binlogsql run failed!"))
+=======
+				log.Error().Err(err).Msg(fmt.Sprintf("binlogserver run failed!"))
+>>>>>>> 9a9af1027f37ad5c37dfde516c40aab107a75600
 				return err
 			}
 			return nil
