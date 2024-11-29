@@ -1,9 +1,0 @@
-{"level":"error","error":"mkdir /data: read-only file system","dir":"/data/logs/dba","time":"2024-08-04T09:55:14+08:00","caller":"/Users/suyonghe/Desktop/dbkit/pkg/config/config.go:109","message":"mkdir common data path failed!"}
-{"level":"info","time":"2024-08-04T09:57:21+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:40","message":"ConfigFile:"}
-{"level":"info","time":"2024-08-04T09:57:21+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:41","message":"Debug: false"}
-{"level":"info","time":"2024-08-04T10:00:20+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:40","message":"ConfigFile:"}
-{"level":"info","time":"2024-08-04T10:00:20+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:41","message":"Debug: false"}
-{"level":"info","time":"2024-08-04T10:00:53+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:40","message":"ConfigFile:"}
-{"level":"info","time":"2024-08-04T10:00:53+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:41","message":"Debug: false"}
-{"level":"info","time":"2024-08-04T10:36:59+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:40","message":"ConfigFile:"}
-{"level":"info","time":"2024-08-04T10:36:59+08:00","caller":"/Users/suyonghe/Desktop/dbkit/model/options.go:41","message":"Debug: false"}

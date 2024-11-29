@@ -4,7 +4,10 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="64e8ccca-3c6d-4599-92f4-3fae95c91019" name="Changes" comment="" />
+    <list default="true" id="64e8ccca-3c6d-4599-92f4-3fae95c91019" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/cmd/dbkit/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/dbkit/main.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logs/dba.log" beforeDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
