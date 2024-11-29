@@ -4,50 +4,7 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="64e8ccca-3c6d-4599-92f4-3fae95c91019" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/master/command/filter/buffer_filter.go" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/master/command/filter/conc_filter.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmd/dbkit/main" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmd/dbkit/main.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/binlogsql/file.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/binlogsql/flag.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/binlogsql/other.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/binlogsql/replication.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/binlogsql/run.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/filter/file.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/filter/flag.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/filter/run.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/filter/seq_filter.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/sync/es.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/sync/flag.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/sync/kafka.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/sync/mysql.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/sync/redis.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/sync/run.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/command/util.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/common/common.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/conf/dbkit.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/conf/yaml.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/go.mod" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/go.sum" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/logging/logging.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/logs/dba.log" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/master/command/filter/file.go" beforeDir="false" afterPath="$PROJECT_DIR$/master/command/filter/file.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/master/command/filter/flag.go" beforeDir="false" afterPath="$PROJECT_DIR$/master/command/filter/flag.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/master/command/filter/run.go" beforeDir="false" afterPath="$PROJECT_DIR$/master/command/filter/run.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/master/command/filter/seq_filter.go" beforeDir="false" afterPath="$PROJECT_DIR$/master/command/filter/seq_filter.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/master/go.mod" beforeDir="false" afterPath="$PROJECT_DIR$/master/go.mod" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/master/go.sum" beforeDir="false" afterPath="$PROJECT_DIR$/master/go.sum" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/master/model/filter.go" beforeDir="false" afterPath="$PROJECT_DIR$/master/model/filter.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/model/binlogsql.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/model/filter.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/model/mysql.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/model/options.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/model/sync.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/pkg/config/config.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/pkg/util/wait_signal.go" beforeDir="false" />
-    </list>
+    <list default="true" id="64e8ccca-3c6d-4599-92f4-3fae95c91019" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -67,7 +24,7 @@
         <entry key="$PROJECT_DIR$" value="master" />
       </map>
     </option>
-    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/master" />
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="ProjectId" id="2pNZhyfMHq0zSeQWJ5ZQDIi5Wg0" />
   <component name="ProjectViewState">
