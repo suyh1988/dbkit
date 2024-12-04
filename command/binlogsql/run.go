@@ -147,6 +147,13 @@ func Run(options *model.DaemonOptions, _args []string) error {
 					log.Info().Msg(fmt.Sprintf("Context deadline exceeded: exiting binlog stream."))
 					return nil
 				}
+				//GTID切换导致匿名事务解析异常，需要reset master
+				if strings.Contains(err.Error(), "Cannot replicate anonymous transaction") {
+					log.Warn().Msg("Skipping anonymous transaction due to GTID_MODE enforcement")
+					position = syncer.GetNextPosition() // 跳到下一个 binlog 位点
+					return err
+				}
+
 				// 处理其他错误
 				log.Info().Msg(fmt.Sprintf("Error in binlog streaming: %v\n", err))
 				return err
@@ -239,6 +246,7 @@ func ParseBinlogSQL(db *sql.DB, ev *replication.BinlogEvent, options *model.Daem
 			}
 		}
 		return nil
+
 	case *replication.XIDEvent:
 		if (options.BinlogSql.DBName != "" && schema.DbName != options.BinlogSql.DBName) || (options.BinlogSql.TableName != "" && schema.TableName != options.BinlogSql.TableName) {
 			//continue
@@ -248,6 +256,13 @@ func ParseBinlogSQL(db *sql.DB, ev *replication.BinlogEvent, options *model.Daem
 		}
 		fmt.Printf("/* Xid=%d, Position=%d */\n", e.XID, ev.Header.LogPos)
 		return nil
+
+	case *replication.GTIDEvent:
+		uuid := FormatGTID(e.SID)
+		gtid := fmt.Sprintf("%s:%d", uuid, e.GNO) // GTID 格式：UUID:GNO
+		fmt.Printf("/* GTID %s */\n", gtid)
+		return nil
+
 	default:
 		log.Info().Msg(fmt.Sprintf("event is not define: %v", e))
 		return nil

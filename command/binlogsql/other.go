@@ -1,5 +1,7 @@
 package binlogsql
 
+import "fmt"
+
 type NoOpLogger struct{}
 
 func (l *NoOpLogger) Debug(args ...interface{})                 {}
@@ -29,3 +31,13 @@ func (l *NoOpLogger) Panicln(args ...interface{})               {}
 func (l *NoOpLogger) Print(args ...interface{})                 {}
 func (l *NoOpLogger) Printf(format string, args ...interface{}) {}
 func (l *NoOpLogger) Println(args ...interface{})               {}
+
+func FormatGTID(sid []byte) string {
+	return fmt.Sprintf("%x-%x-%x-%x-%x",
+		sid[0:4],
+		sid[4:6],
+		sid[6:8],
+		sid[8:10],
+		sid[10:16],
+	)
+}
