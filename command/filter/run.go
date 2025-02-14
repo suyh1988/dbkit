@@ -1,5 +1,10 @@
 package filter
 
+/*
+这个filter工具是用来过滤mysqldump文件的部分库表
+需要过滤的表名,表明前面必须带上数据库名,支持导出多个库,或指定的库表,示例：db1.*,db1.table1,db2.table2
+*/
+
 import (
 	"errors"
 	"example.com/m/v2/model"

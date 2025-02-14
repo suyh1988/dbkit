@@ -124,7 +124,41 @@ func Run(options *model.DaemonOptions, _args []string) error {
 		return syncBinlogToRedis(syncer, &redisClient, position, SyncConfig, options, db)
 
 	case "mongodb":
-		return nil
+		// 初始化目标客户端（mongodb）
+		mongoClient, err := InitMongoDB(SyncConfig)
+		if err != nil {
+			log.Error().Err(err).Msg("init mongo client error")
+			return err
+		}
+
+		//获取数据表列名
+		err = FlushColumnNames(options, db, SyncConfig)
+		if err != nil {
+			log.Error().Err(err).Msg("get table column Name error")
+			return err
+		}
+
+		if SyncConfig.Source.Mode == "full" {
+			log.Info().Msg(fmt.Sprintf("开始全量同步 MySQL 数据到 %s ", SyncConfig.Target.Type))
+			//全量同步
+			position, err = DumpFullMySQLTableToMongoDB(db, SyncConfig, mongoClient, options, 3)
+			if err != nil {
+				log.Error().Err(err).Msg("全量同步失败")
+				return err
+			}
+			log.Info().Msg("全量同步成功")
+			err = conf.UpdateBinlogPos(options.MysqlSync.ConfigFile, fmt.Sprintf("%s:%s", position.Name, position.Pos))
+			if err != nil {
+				log.Error().Err(err).Msg(fmt.Sprintf("save binlog to %s failed: %s", options.MysqlSync.ConfigFile, position.String()))
+				return err
+			}
+			log.Info().Msg(fmt.Sprintf("save binlog to %s success: %s", options.MysqlSync.ConfigFile, position.String()))
+		}
+
+		// 开始增量同步
+		log.Info().Msg(fmt.Sprintf("增量同步到MongoDB %s, pos %s:%d", SyncConfig.Target.MongoDB.URI, position.Name, position.Pos))
+		return syncBinlogToMongoDB(syncer, mongoClient, position, SyncConfig, options, db)
+
 	case "elasticsearch":
 		return nil
 	case "kafka":

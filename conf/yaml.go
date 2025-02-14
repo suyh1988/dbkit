@@ -31,6 +31,8 @@ type MongoDBConfig struct {
 	URI        string `yaml:"uri"`
 	Database   string `yaml:"database"`
 	Collection string `yaml:"collection"`
+	Primary    string `yaml:"primary"`
+	Index      string `yaml:"index"`
 	Options    struct {
 		MaxPoolSize      int `yaml:"maxPoolSize"`
 		ConnectTimeoutMS int `yaml:"connectTimeoutMS"`

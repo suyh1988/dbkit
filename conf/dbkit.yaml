@@ -38,6 +38,8 @@ target:
     uri: "mongodb://user:password@127.0.0.1:27017"
     database: "my_database"
     collection: "my_collection"
+    primary: "true" #是否和源表保持主键统一
+    index: "false"  #是否和源表保持索引统一
     options:
       maxPoolSize: 10
       connectTimeoutMS: 3000
