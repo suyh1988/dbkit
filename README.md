@@ -27,7 +27,7 @@ GLOBAL OPTIONS:
    --help, -h      show help
    --version, -v   print the version
 
-#####子命令简介
+##### 子命令简介
 目前支持3个子命令： binlogsql | sync | filter
 
 ###### binlogsql: 支持在线和离线的正向解析和反向解析MySQL的binlog，可以用来检查binlog和数据误删除恢复
